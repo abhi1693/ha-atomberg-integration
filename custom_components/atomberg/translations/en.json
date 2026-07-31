@@ -65,18 +65,6 @@
       "timer": {
         "name": "Timer"
       },
-      "timer_1h": {
-        "name": "Timer 1 Hour"
-      },
-      "timer_2h": {
-        "name": "Timer 2 Hours"
-      },
-      "timer_3h": {
-        "name": "Timer 3 Hours"
-      },
-      "timer_6h": {
-        "name": "Timer 6 Hours"
-      },
       "toggle_speed": {
         "name": "Toggle Speed"
       },
