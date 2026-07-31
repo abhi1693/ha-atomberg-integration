@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from infrared_protocols.commands import Command as InfraredCommand
-
 from homeassistant.components.infrared import async_send_command
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE
@@ -13,6 +11,7 @@ from homeassistant.core import Event, EventStateChangedData, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_state_change_event
+from infrared_protocols.commands import Command as InfraredCommand
 
 from .const import (
     CONF_FAN_MODEL,

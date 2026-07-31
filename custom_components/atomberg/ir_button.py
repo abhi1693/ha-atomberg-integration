@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from infrared_protocols.commands import Command as InfraredCommand
-
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from infrared_protocols.commands import Command as InfraredCommand
 
 from .atomberg_ir_codes import AtombergIRCommand, EfficioPlusPedestalIRCommand
 from .const import CONF_FAN_MODEL, FanModel
