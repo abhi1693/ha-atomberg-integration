@@ -28,7 +28,7 @@ BUTTON_DESCRIPTIONS: tuple[AtombergIrButtonDescription, ...] = (
     AtombergIrButtonDescription(
         key="boost",
         translation_key="boost",
-        icon="mdi:fan-speed-plus",
+        icon="mdi:fan-alert",
         command=AtombergIRCommand.BOOST,
     ),
     AtombergIrButtonDescription(
