@@ -8,6 +8,7 @@ from homeassistant.components.button import ButtonEntity, ButtonEntityDescriptio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from infrared_protocols.commands import Command as InfraredCommand
 
 from .atomberg_ir_codes import AtombergIRCommand, EfficioPlusPedestalIRCommand
 from .const import CONF_FAN_MODEL, FanModel
@@ -20,49 +21,33 @@ PARALLEL_UPDATES = 1
 class AtombergIrButtonDescription(ButtonEntityDescription):
     """Describes an Atomberg IR button entity."""
 
-    command_code: int
+    command: InfraredCommand
 
 
 BUTTON_DESCRIPTIONS: tuple[AtombergIrButtonDescription, ...] = (
     AtombergIrButtonDescription(
         key="boost",
         translation_key="boost",
-        command_code=AtombergIRCommand.BOOST,
+        icon="mdi:fan-alert",
+        command=AtombergIRCommand.BOOST,
     ),
     AtombergIrButtonDescription(
         key="led",
         translation_key="led",
-        command_code=AtombergIRCommand.LED,
+        icon="mdi:lightbulb-on-outline",
+        command=AtombergIRCommand.LED,
     ),
     AtombergIrButtonDescription(
         key="sleep",
         translation_key="sleep",
-        command_code=AtombergIRCommand.SLEEP,
+        icon="mdi:sleep",
+        command=AtombergIRCommand.SLEEP,
     ),
     AtombergIrButtonDescription(
         key="timer",
         translation_key="timer",
-        command_code=AtombergIRCommand.TIMER,
-    ),
-    AtombergIrButtonDescription(
-        key="timer_1h",
-        translation_key="timer_1h",
-        command_code=AtombergIRCommand.TIMER_1H,
-    ),
-    AtombergIrButtonDescription(
-        key="timer_2h",
-        translation_key="timer_2h",
-        command_code=AtombergIRCommand.TIMER_2H,
-    ),
-    AtombergIrButtonDescription(
-        key="timer_3h",
-        translation_key="timer_3h",
-        command_code=AtombergIRCommand.TIMER_3H,
-    ),
-    AtombergIrButtonDescription(
-        key="timer_6h",
-        translation_key="timer_6h",
-        command_code=AtombergIRCommand.TIMER_6H,
+        icon="mdi:timer",
+        command=AtombergIRCommand.TIMER,
     ),
 )
 
@@ -72,17 +57,17 @@ EFFICIO_PLUS_PEDESTAL_BUTTON_DESCRIPTIONS: tuple[AtombergIrButtonDescription, ..
     AtombergIrButtonDescription(
         key="toggle_speed",
         translation_key="toggle_speed",
-        command_code=EfficioPlusPedestalIRCommand.TOGGLE_SPEED,
+        command=EfficioPlusPedestalIRCommand.TOGGLE_SPEED,
     ),
     AtombergIrButtonDescription(
         key="swing",
         translation_key="swing",
-        command_code=EfficioPlusPedestalIRCommand.SWING,
+        command=EfficioPlusPedestalIRCommand.SWING,
     ),
     AtombergIrButtonDescription(
         key="timer",
         translation_key="timer",
-        command_code=EfficioPlusPedestalIRCommand.TIMER,
+        command=EfficioPlusPedestalIRCommand.TIMER,
     ),
 )
 
@@ -120,4 +105,4 @@ class AtombergIrButton(AtombergIrEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Press the button."""
-        await self._send_command(self.entity_description.command_code)
+        await self._send_command(self.entity_description.command)

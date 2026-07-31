@@ -11,8 +11,8 @@ from homeassistant.core import Event, EventStateChangedData, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.event import async_track_state_change_event
+from infrared_protocols.commands import Command as InfraredCommand
 
-from .atomberg_ir_codes import make_atomberg_command, make_efficio_plus_pedestal_command
 from .const import (
     CONF_FAN_MODEL,
     CONF_IR_EMITTER_ENTITY,
@@ -78,15 +78,11 @@ class AtombergIrEntity(Entity):
             ir_state is not None and ir_state.state != STATE_UNAVAILABLE
         )
 
-    async def _send_command(self, command_code: int) -> None:
+    async def _send_command(self, command: InfraredCommand) -> None:
         """Send an IR command to the Atomberg fan."""
-        if self._fan_model == FanModel.EFFICIO_PLUS_400MM_PEDESTAL:
-            ir_command = make_efficio_plus_pedestal_command(command_code)
-        else:
-            ir_command = make_atomberg_command(command_code)
         await async_send_command(
             self.hass,
             self._infrared_entity_id,
-            ir_command,
+            command,
             context=self._context,
         )
