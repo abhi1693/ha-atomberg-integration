@@ -28,21 +28,25 @@ BUTTON_DESCRIPTIONS: tuple[AtombergIrButtonDescription, ...] = (
     AtombergIrButtonDescription(
         key="boost",
         translation_key="boost",
+        icon="mdi:fan-speed-plus",
         command=AtombergIRCommand.BOOST,
     ),
     AtombergIrButtonDescription(
         key="led",
         translation_key="led",
+        icon="mdi:lightbulb-on-outline",
         command=AtombergIRCommand.LED,
     ),
     AtombergIrButtonDescription(
         key="sleep",
         translation_key="sleep",
+        icon="mdi:sleep",
         command=AtombergIRCommand.SLEEP,
     ),
     AtombergIrButtonDescription(
         key="timer",
         translation_key="timer",
+        icon="mdi:timer",
         command=AtombergIRCommand.TIMER,
     ),
 )
