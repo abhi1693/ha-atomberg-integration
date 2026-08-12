@@ -251,16 +251,37 @@ class AtombergCloudAPI:
                 )
 
         resp = await self._hass.async_add_executor_job(func)
-        if resp.status_code == 429:
+        error_message = self._response_error_message(resp)
+        provider_quota_denied = (
+            resp.status_code == 403
+            and "explicit deny in an identity-based policy" in error_message.lower()
+        )
+        if resp.status_code == 429 or provider_quota_denied:
             if self._call_budget is not None:
                 await self._call_budget.async_mark_provider_quota_exhausted()
             raise CloudApiQuotaExceeded(
-                "Atomberg cloud API returned HTTP 429; calls are paused for 24 hours"
+                f"Atomberg cloud API denied access with HTTP {resp.status_code}; "
+                "calls are paused for 24 hours"
             )
         if not resp.ok and resp.status_code < 500:
-            error_msg = resp.json()["message"]
-            _LOGGER.error("Request failed due to %s", error_msg)
+            _LOGGER.error(
+                "Atomberg cloud request failed with HTTP %d: %s",
+                resp.status_code,
+                error_message or "unknown response",
+            )
         return resp
+
+    @staticmethod
+    def _response_error_message(resp: Response) -> str:
+        """Extract Atomberg and API Gateway error messages safely."""
+        try:
+            data = resp.json()
+        except (requests.exceptions.JSONDecodeError, ValueError):
+            return ""
+        if not isinstance(data, dict):
+            return ""
+        message = data.get("message", data.get("Message", ""))
+        return message if isinstance(message, str) else ""
 
     async def async_sync_list_of_devices(self) -> bool:
         """Get list of all devices connected to the account."""

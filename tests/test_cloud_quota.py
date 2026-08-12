@@ -3,13 +3,14 @@
 import asyncio
 import time
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from custom_components.atomberg.api import (
     CLOUD_CALL_LIMIT,
     CLOUD_POLL_CALL_LIMIT,
+    AtombergCloudAPI,
     AtombergCloudCallBudget,
     CloudApiQuotaExceeded,
     CloudPollQuotaExceeded,
@@ -73,6 +74,31 @@ class CloudQuotaTests(unittest.IsolatedAsyncioTestCase):
 
         assert slept_for is not None
         assert slept_for > 0.2
+
+    async def test_api_gateway_explicit_deny_opens_circuit_breaker(self):
+        """Atomberg's HTTP 403 quota response must stop further retries."""
+        response = Mock()
+        response.status_code = 403
+        response.ok = False
+        response.json.return_value = {
+            "Message": "User is not authorized with an explicit deny in an "
+            "identity-based policy"
+        }
+        hass = Mock()
+        hass.async_add_executor_job = AsyncMock(return_value=response)
+        call_budget = Mock()
+        call_budget.async_acquire = AsyncMock()
+        call_budget.async_mark_provider_quota_exhausted = AsyncMock()
+        api = AtombergCloudAPI(hass, "api-key", "refresh-token", call_budget)
+
+        with pytest.raises(CloudApiQuotaExceeded):
+            await api.async_make_request(
+                "/v1/get_access_token",
+                headers={"Authorization": "Bearer refresh-token"},
+                call_type="auth",
+            )
+
+        call_budget.async_mark_provider_quota_exhausted.assert_awaited_once_with()
 
 
 if __name__ == "__main__":
