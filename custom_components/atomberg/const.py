@@ -6,6 +6,7 @@ DOMAIN = "atomberg"
 
 UDP_LISTENER = "udp_listener"
 ENTRIES = "entries"
+CLOUD_CALL_BUDGET = "cloud_call_budget"
 
 CONF_REFRESH_TOKEN = "refresh_token"
 CONF_USE_CLOUD_CONTROL = "use_cloud_control"

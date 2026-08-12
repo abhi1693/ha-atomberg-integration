@@ -1,19 +1,33 @@
-"""Cloud API for Atomberg."""
+"""Cloud API for Atomberg with persistent provider quota protection."""
 
+import asyncio
 import datetime
 import functools
+import time
 from copy import deepcopy
 from logging import getLogger
-from typing import Literal
+from typing import Any, Literal
 
 import jwt
 import requests
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.storage import Store
 from homeassistant.util.dt import utcnow
 from requests import Response
 
+from .const import CLOUD_CALL_BUDGET, DOMAIN
+
 _LOGGER = getLogger(__name__)
+
+CLOUD_CALL_LIMIT = 100
+CLOUD_POLL_CALL_LIMIT = 24
+CLOUD_CALL_WINDOW = datetime.timedelta(hours=24)
+CLOUD_MIN_CALL_INTERVAL = 0.21
+STORAGE_VERSION = 1
+STORAGE_KEY = f"{DOMAIN}.cloud_api_calls"
+
+CloudCallType = Literal["auth", "setup", "poll", "command"]
 
 SUPPORTED_SERIES = [
     "R1",
@@ -32,22 +46,130 @@ SUPPORTED_SERIES = [
 ]
 
 
+class AtombergCloudCallBudget:
+    """Persist and enforce the Atomberg cloud API limits."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the rolling call budget."""
+        self._store = Store[dict[str, Any]](hass, STORAGE_VERSION, STORAGE_KEY)
+        self._lock = asyncio.Lock()
+        self._calls: list[dict[str, Any]] = []
+        self._blocked_until: float | None = None
+        self._last_call_started: float | None = None
+
+    async def async_load(self) -> None:
+        """Load persisted usage and discard expired records."""
+        stored = await self._store.async_load() or {}
+        calls = stored.get("calls", [])
+        self._calls = [
+            call
+            for call in calls
+            if isinstance(call, dict)
+            and isinstance(call.get("timestamp"), (int, float))
+            and call.get("kind") in {"auth", "setup", "poll", "command"}
+        ]
+        blocked_until = stored.get("blocked_until")
+        self._blocked_until = (
+            float(blocked_until) if isinstance(blocked_until, (int, float)) else None
+        )
+        self._prune(utcnow().timestamp())
+
+    def _prune(self, now: float) -> None:
+        """Remove calls outside the rolling provider quota window."""
+        cutoff = now - CLOUD_CALL_WINDOW.total_seconds()
+        self._calls = [call for call in self._calls if call["timestamp"] > cutoff]
+        if self._blocked_until is not None and self._blocked_until <= now:
+            self._blocked_until = None
+
+    async def _async_save(self) -> None:
+        """Persist the quota before allowing another API call."""
+        await self._store.async_save(
+            {"calls": self._calls, "blocked_until": self._blocked_until}
+        )
+
+    async def async_acquire(self, kind: CloudCallType) -> None:
+        """Reserve one API call while enforcing daily and burst limits."""
+        async with self._lock:
+            now = utcnow().timestamp()
+            self._prune(now)
+
+            if self._blocked_until is not None:
+                raise CloudApiQuotaExceeded(
+                    "Atomberg reported its cloud API quota exhausted; calls are "
+                    "paused for 24 hours"
+                )
+
+            if len(self._calls) >= CLOUD_CALL_LIMIT:
+                raise CloudApiQuotaExceeded(
+                    "Atomberg cloud API rolling limit of 100 calls per 24 hours "
+                    "has been reached"
+                )
+
+            poll_calls = sum(call["kind"] == "poll" for call in self._calls)
+            if kind == "poll" and poll_calls >= CLOUD_POLL_CALL_LIMIT:
+                raise CloudPollQuotaExceeded(
+                    "Atomberg cloud polling allocation of 24 calls per 24 hours "
+                    "has been reached"
+                )
+
+            if self._last_call_started is not None:
+                elapsed = time.monotonic() - self._last_call_started
+                if delay := CLOUD_MIN_CALL_INTERVAL - elapsed:
+                    if delay > 0:
+                        await asyncio.sleep(delay)
+
+            call_started = utcnow().timestamp()
+            self._calls.append({"timestamp": call_started, "kind": kind})
+            await self._async_save()
+            self._last_call_started = time.monotonic()
+
+    async def async_mark_provider_quota_exhausted(self) -> None:
+        """Stop retries after Atomberg returns HTTP 429."""
+        async with self._lock:
+            self._blocked_until = (utcnow() + CLOUD_CALL_WINDOW).timestamp()
+            await self._async_save()
+
+
+async def async_get_cloud_call_budget(
+    hass: HomeAssistant,
+) -> AtombergCloudCallBudget:
+    """Return the shared account-level cloud call budget."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if budget := domain_data.get(CLOUD_CALL_BUDGET):
+        return budget
+
+    budget = AtombergCloudCallBudget(hass)
+    await budget.async_load()
+    domain_data[CLOUD_CALL_BUDGET] = budget
+    return budget
+
+
 class AtombergCloudAPI:
     """Atomberg CloudAPI."""
 
-    def __init__(self, hass: HomeAssistant, api_key: str, refresh_token: str) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        api_key: str,
+        refresh_token: str,
+        call_budget: AtombergCloudCallBudget | None = None,
+    ) -> None:
         """Init Atomberg CloudAPI."""
         self._hass = hass
         self._base_url = "https://api.developer.atomberg-iot.com"
         self._api_key = api_key
         self._refresh_token = refresh_token
+        self._call_budget = call_budget
         self._access_token = None
+        self._access_token_lock = asyncio.Lock()
         self.device_list: dict[str, dict] = {}
 
     async def test_connection(self):
         """Test API connection."""
         try:
             await self.async_sync_list_of_devices()
+        except CloudApiQuotaExceeded:
+            raise
         except KeyError as e:
             _LOGGER.error("Atomberg Cloud authentication failed")
             raise InvalidAuth("Failed to authenticate") from e
@@ -57,42 +179,41 @@ class AtombergCloudAPI:
 
     async def async_get_access_token(self):
         """Get access token."""
+        async with self._access_token_lock:
+            access_token_expired = False
+            if self._access_token:
+                try:
+                    access_token_data = jwt.decode(
+                        self._access_token, options={"verify_signature": False}
+                    )
+                    exp_timestamp = access_token_data["exp"]
+                    exp_datetime = datetime.datetime.fromtimestamp(
+                        exp_timestamp, datetime.UTC
+                    )
+                    access_token_expired = utcnow() > exp_datetime
+                except jwt.ExpiredSignatureError:
+                    access_token_expired = True
 
-        async def get_access_token():
+                if not access_token_expired:
+                    return self._access_token
+
             try:
                 resp = await self.async_make_request(
                     "/v1/get_access_token",
                     headers={"Authorization": f"Bearer {self._refresh_token}"},
+                    call_type="auth",
                 )
             except requests.exceptions.ConnectionError:
                 return ConnectionError
 
             if not resp.ok:
-                return
+                return None
 
             data = resp.json()
             if data["status"] == "Success":
-                self._access_token = resp.json()["message"]["access_token"]
+                self._access_token = data["message"]["access_token"]
                 return self._access_token
-
-        access_token_expired = False
-        if self._access_token:
-            try:
-                access_token_data = jwt.decode(
-                    self._access_token, options={"verify_signature": False}
-                )
-                exp_timestamp = access_token_data["exp"]
-                exp_datetime = datetime.datetime.fromtimestamp(
-                    exp_timestamp, datetime.UTC
-                )
-                access_token_expired = utcnow() > exp_datetime
-            except jwt.ExpiredSignatureError:
-                access_token_expired = True
-
-            if not access_token_expired:
-                return self._access_token
-
-        return await get_access_token()
+            return None
 
     async def async_make_request(
         self,
@@ -100,6 +221,7 @@ class AtombergCloudAPI:
         method: Literal["GET", "POST"] = "GET",
         body: dict | None = None,
         headers: dict | None = None,
+        call_type: CloudCallType = "setup",
     ) -> Response:
         """Make a request."""
         headers_base = {
@@ -111,6 +233,9 @@ class AtombergCloudAPI:
             else {"Authorization": f"Bearer {await self.async_get_access_token()}"}
         )
         full_url = self._base_url + url
+
+        if self._call_budget is not None:
+            await self._call_budget.async_acquire(call_type)
 
         match method:
             case "POST":
@@ -126,6 +251,12 @@ class AtombergCloudAPI:
                 )
 
         resp = await self._hass.async_add_executor_job(func)
+        if resp.status_code == 429:
+            if self._call_budget is not None:
+                await self._call_budget.async_mark_provider_quota_exhausted()
+            raise CloudApiQuotaExceeded(
+                "Atomberg cloud API returned HTTP 429; calls are paused for 24 hours"
+            )
         if not resp.ok and resp.status_code < 500:
             error_msg = resp.json()["message"]
             _LOGGER.error("Request failed due to %s", error_msg)
@@ -145,7 +276,7 @@ class AtombergCloudAPI:
                 )
             )
             states = await self.async_get_device_state(
-                [d["device_id"] for d in supported_devices]
+                [d["device_id"] for d in supported_devices], call_type="setup"
             )
             for dev in supported_devices:
                 state = next(
@@ -163,10 +294,14 @@ class AtombergCloudAPI:
         return status
 
     async def async_get_device_state(
-        self, device_ids: list[str] | None = None
+        self,
+        device_ids: list[str] | None = None,
+        call_type: Literal["setup", "poll"] = "poll",
     ) -> list[dict] | None:
         """Get state of all/single device(s)."""
-        resp = await self.async_make_request("/v1/get_device_state?device_id=all")
+        resp = await self.async_make_request(
+            "/v1/get_device_state?device_id=all", call_type=call_type
+        )
 
         data = resp.json()
         if data["status"] == "Success":
@@ -190,7 +325,9 @@ class AtombergCloudAPI:
         """Send command to a device."""
         _LOGGER.debug("Sending command: '%s' to %s", command, device_id)
         payload = {"device_id": device_id, "command": command}
-        resp = await self.async_make_request("/v1/send_command", "POST", body=payload)
+        resp = await self.async_make_request(
+            "/v1/send_command", "POST", body=payload, call_type="command"
+        )
         data = resp.json()
         return data["status"] == "Success"
 
@@ -201,3 +338,11 @@ class CannotConnect(HomeAssistantError):
 
 class InvalidAuth(HomeAssistantError):
     """Error to indicate there is invalid auth."""
+
+
+class CloudApiQuotaExceeded(HomeAssistantError):
+    """Error to indicate the account-level cloud quota is exhausted."""
+
+
+class CloudPollQuotaExceeded(CloudApiQuotaExceeded):
+    """Error to indicate the reserved cloud polling budget is exhausted."""

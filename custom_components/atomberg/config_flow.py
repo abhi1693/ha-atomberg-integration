@@ -25,7 +25,12 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
 )
 
-from .api import AtombergCloudAPI, CannotConnect, InvalidAuth
+from .api import (
+    AtombergCloudAPI,
+    CannotConnect,
+    InvalidAuth,
+    async_get_cloud_call_budget,
+)
 from .const import (
     CONF_CONTROL_METHOD,
     CONF_FAN_MODEL,
@@ -62,12 +67,14 @@ async def validate_cloud_input(
     api_key = data[CONF_API_KEY]
     refresh_token = data[CONF_REFRESH_TOKEN]
 
-    api = AtombergCloudAPI(hass, api_key, refresh_token)
+    api = AtombergCloudAPI(
+        hass, api_key, refresh_token, await async_get_cloud_call_budget(hass)
+    )
     await api.test_connection()
 
     title = "Atomberg Integration"
-    if hass.data.get(DOMAIN):
-        title += f" {len(hass.data[DOMAIN][ENTRIES]) + 1}"
+    if entries := hass.data.get(DOMAIN, {}).get(ENTRIES):
+        title += f" {len(entries) + 1}"
 
     return {"title": title}
 

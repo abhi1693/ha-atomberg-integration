@@ -52,8 +52,10 @@ class AtombergSleepModeSwitchEntity(AtombergEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on entity."""
-        await self._device.async_turn_on_sleep_mode()
+        if await self._device.async_turn_on_sleep_mode():
+            self.publish_command_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off entity."""
-        await self._device.async_turn_off_sleep_mode()
+        if await self._device.async_turn_off_sleep_mode():
+            self.publish_command_state()

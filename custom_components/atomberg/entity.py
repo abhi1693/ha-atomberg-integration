@@ -152,3 +152,8 @@ class AtombergEntity(CoordinatorEntity, Entity):
         if self.device_state != self._device.state:
             self._attr_device_state = self._device.state
             self.async_schedule_update_ha_state()
+
+    @callback
+    def publish_command_state(self) -> None:
+        """Publish state acknowledged by a successful device command."""
+        self.coordinator.async_publish_device_state(self._device)

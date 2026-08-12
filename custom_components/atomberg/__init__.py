@@ -7,7 +7,7 @@ from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 
-from .api import AtombergCloudAPI
+from .api import AtombergCloudAPI, async_get_cloud_call_budget
 from .const import (
     CONF_CONTROL_METHOD,
     CONF_REFRESH_TOKEN,
@@ -45,10 +45,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_setup_cloud_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Atomberg using cloud API."""
-    domain_data = hass.data.setdefault(DOMAIN, {UDP_LISTENER: None, ENTRIES: {}})
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    domain_data.setdefault(UDP_LISTENER, None)
+    domain_data.setdefault(ENTRIES, {})
+
+    call_budget = await async_get_cloud_call_budget(hass)
 
     api = AtombergCloudAPI(
-        hass, entry.data[CONF_API_KEY], entry.data[CONF_REFRESH_TOKEN]
+        hass,
+        entry.data[CONF_API_KEY],
+        entry.data[CONF_REFRESH_TOKEN],
+        call_budget,
     )
 
     try:
@@ -75,7 +82,7 @@ async def _async_setup_cloud_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
     )
     domain_data[ENTRIES][entry.entry_id] = coordinator
 
-    await coordinator.async_config_entry_first_refresh()
+    coordinator.async_set_initial_data()
 
     await hass.config_entries.async_forward_entry_setups(entry, CLOUD_PLATFORMS)
 

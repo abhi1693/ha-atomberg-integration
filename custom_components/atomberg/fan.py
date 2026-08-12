@@ -78,18 +78,22 @@ class AtombergFanEntity(AtombergEntity, FanEntity):
     async def async_set_percentage(self, percentage: int) -> None:
         """Set the speed percentage of the fan."""
         if percentage == 0:
-            await self._device.async_turn_off()
+            changed = await self._device.async_turn_off()
         else:
-            await self._device.async_set_speed(
+            changed = await self._device.async_set_speed(
                 percentage_to_ordered_list_item(
                     ORDERED_FAN_SPEEDS, percentage=percentage
                 )
             )
+        if changed:
+            self.publish_command_state()
 
     async def async_turn_on(self, *args, **kwargs: Any) -> None:
         """Turn on the entity."""
-        await self._device.async_turn_on()
+        if await self._device.async_turn_on():
+            self.publish_command_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the entity."""
-        await self._device.async_turn_off()
+        if await self._device.async_turn_off():
+            self.publish_command_state()
