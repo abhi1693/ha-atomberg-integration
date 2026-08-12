@@ -1,6 +1,5 @@
 """Base Atomberg entity."""
 
-from datetime import datetime, timedelta
 from logging import Logger
 from typing import TypeVar
 
@@ -11,7 +10,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.dt import utcnow
 
@@ -32,8 +30,6 @@ from .device import (
     LIGHT_MODE_WARM,
     AtombergDevice,
 )
-
-AVAILABILITY_TIMEOUT = 10  # Seconds
 
 _EntityT = TypeVar("_EntityT", bound="AtombergEntity")
 
@@ -77,7 +73,6 @@ class AtombergEntity(CoordinatorEntity, Entity):
             model=self._device.model,
         )
         self._logger = logger
-        self._stop_availability_refresher = None
 
     def _get_unique_id(
         self, platform: Platform | None = None, suffix: str | None = None
@@ -101,6 +96,12 @@ class AtombergEntity(CoordinatorEntity, Entity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
+        if "devices" in self.coordinator.data:
+            if state := self.coordinator.data["devices"].get(self._device.id):
+                self._device.update_state(state)
+                self.update_ha_state_if_required()
+            return
+
         if self.coordinator.data["device_id"] != self._device.id:
             return
 
@@ -151,39 +152,3 @@ class AtombergEntity(CoordinatorEntity, Entity):
         if self.device_state != self._device.state:
             self._attr_device_state = self._device.state
             self.async_schedule_update_ha_state()
-
-    @callback
-    def _refresh_availability(self, now: datetime):
-        """Update is_online state based on last_seen."""
-        if self._device.last_seen and self.available:
-            self._logger.debug(
-                "Refreshing availability of %s (%s) - (%s)",
-                self._device.name,
-                self._device.id,
-                self.name,
-            )
-            self._device.update_state(
-                {
-                    ATTR_IS_ONLINE: now.timestamp() - self._device.last_seen
-                    <= AVAILABILITY_TIMEOUT
-                }
-            )
-            self.update_ha_state_if_required()
-
-    async def async_added_to_hass(self) -> None:
-        """Run when entity is added to hass."""
-        await super().async_added_to_hass()
-
-        # Start availability refresher
-        self._stop_availability_refresher = async_track_time_interval(
-            self.hass,
-            self._refresh_availability,
-            timedelta(seconds=AVAILABILITY_TIMEOUT),
-        )
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Run when entity will be removed from hass."""
-        # Stop availability refresher
-        if self._stop_availability_refresher:
-            self._stop_availability_refresher()
-            self._stop_availability_refresher = None

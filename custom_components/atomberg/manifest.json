@@ -6,8 +6,8 @@
   ],
   "config_flow": true,
   "dependencies": ["infrared"],
-  "documentation": "https://github.com/dasshubham762/atomberg-integration",
-  "iot_class": "local_push",
-  "issue_tracker": "https://github.com/dasshubham762/atomberg-integration/issues",
-  "version": "2.2.3"
+  "documentation": "https://github.com/abhi1693/ha-atomberg-integration",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/abhi1693/ha-atomberg-integration/issues",
+  "version": "2.2.4"
 }

@@ -175,8 +175,6 @@ class AtombergCloudAPI:
                 lambda s: s["device_id"] in device_ids if device_ids else True,
                 deepcopy(data["message"]["device_state"]),
             ):
-                # Keep is_online=False unless it's presense detected through udp broadcasts
-                state["is_online"] = False
                 # Rename some keys for ease of access
                 state["speed"] = state.pop("last_recorded_speed")
                 state["sleep"] = state.pop("sleep_mode")

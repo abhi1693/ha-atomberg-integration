@@ -56,6 +56,10 @@
 - Please note that this integration is designed for the latest series of Atomberg fans and may not work with older models.
 - The integration relies on cloud APIs for initialization (cloud control mode).
 - This integration uses UDP port `5625` for updating the fan state locally, make sure that port is not in use by any other application and that it is not blocked by any firewall.
+- Cloud-control entries poll the Atomberg API every 30 seconds and preserve its
+  `is_online` state. UDP updates remain an optional low-latency path, so cloud
+  availability and control continue to work when Home Assistant runs behind a
+  routed container or Kubernetes network.
 
 ## Control Methods
 

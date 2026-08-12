@@ -68,9 +68,14 @@ async def _async_setup_cloud_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
         udp_listener = domain_data[UDP_LISTENER]
 
     coordinator = AtombergDataUpdateCoordinator(
-        hass=hass, api=api, udp_listener=udp_listener
+        hass=hass,
+        api=api,
+        udp_listener=udp_listener,
+        config_entry=entry,
     )
     domain_data[ENTRIES][entry.entry_id] = coordinator
+
+    await coordinator.async_config_entry_first_refresh()
 
     await hass.config_entries.async_forward_entry_setups(entry, CLOUD_PLATFORMS)
 
