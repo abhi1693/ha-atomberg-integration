@@ -146,6 +146,34 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
             OFFICE_DEVICE_ID, {"power": True}
         )
 
+    async def test_turn_on_at_speed_uses_one_cloud_command(self):
+        """Power and selected speed must share the same provider call."""
+        api = Mock()
+        api.async_send_command = AsyncMock(return_value=True)
+        hass = Mock()
+        hass.states.async_all.return_value = []
+        device = AtombergDevice(
+            data={
+                "device_id": OFFICE_DEVICE_ID,
+                "color": "",
+                "series": "",
+                "model": "aris_gladius",
+                "name": "Office Fan",
+                "state": {"is_online": True, "power": False, "speed": 2},
+            },
+            api=api,
+            hass=hass,
+        )
+
+        changed = await device.async_turn_on_at_speed(4)
+
+        assert changed is True
+        assert device.state["power"] is True
+        assert device.state["speed"] == 4
+        api.async_send_command.assert_awaited_once_with(
+            OFFICE_DEVICE_ID, {"power": True, "speed": 4}
+        )
+
     async def test_unpowered_fan_does_not_use_stale_local_address(self):
         """A quota failure must not send locally when the fan is no longer present."""
         api = Mock()

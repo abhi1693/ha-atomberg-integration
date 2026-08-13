@@ -66,6 +66,9 @@
   immediately without spending a second API call. UDP updates remain the
   preferred zero-quota low-latency path when broadcasts can reach Home
   Assistant.
+- Turning on with a requested percentage combines power and one of the six
+  discrete speeds into a single command, allowing quota-conscious dashboards
+  to select a speed while the fan is off without spending two API calls.
 - Cloud control is the default for every cloud entry and remains the first
   choice for every fan. During a cloud quota outage, the integration starts
   from its persisted device cache (or reconstructs it once from Home

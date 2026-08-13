@@ -21,6 +21,18 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
 
         entity.publish_command_state.assert_called_once_with()
 
+    async def test_turn_on_with_percentage_uses_one_combined_command(self):
+        """A speed selection while off must not spend two provider calls."""
+        entity = object.__new__(AtombergFanEntity)
+        entity._device = Mock()
+        entity._device.async_turn_on_at_speed = AsyncMock(return_value=True)
+        entity.publish_command_state = Mock()
+
+        await entity.async_turn_on(percentage=66)
+
+        entity._device.async_turn_on_at_speed.assert_awaited_once_with(4)
+        entity.publish_command_state.assert_called_once_with()
+
     def test_publish_preserves_other_device_states(self):
         """Publishing one command must not discard other fan states."""
         coordinator = object.__new__(AtombergDataUpdateCoordinator)

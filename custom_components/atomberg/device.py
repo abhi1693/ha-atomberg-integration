@@ -199,6 +199,17 @@ class AtombergDevice:
             return True
         return False
 
+    async def async_turn_on_at_speed(self, value: int):
+        """Turn on at one of the fan's six discrete speeds."""
+        if value not in range(1, 7):
+            raise ValueError("Value must in range of 1-6.")
+        cmd = {ATTR_POWER: True, ATTR_SPEED: value}
+        if await self._async_send_command(cmd):
+            _LOGGER.debug("%s: turned on at speed %d", self.name, value)
+            self.update_state(cmd)
+            return True
+        return False
+
     async def async_turn_off(self):
         """Turn off."""
         cmd = {ATTR_POWER: False}
