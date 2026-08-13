@@ -31,8 +31,12 @@ def create_budget() -> AtombergCloudCallBudget:
 class CloudQuotaTests(unittest.IsolatedAsyncioTestCase):
     """Verify cloud calls stay within the provider limits."""
 
+    def test_account_call_limit_matches_current_tier(self):
+        """The local hard cap must match the current 1000-call account tier."""
+        assert CLOUD_CALL_LIMIT == 1000
+
     async def test_total_call_limit_is_hard_capped(self):
-        """The 101st call in a rolling day must be rejected."""
+        """The 1001st call in a rolling day must be rejected."""
         budget = create_budget()
         now = time.time()
         budget._calls = [

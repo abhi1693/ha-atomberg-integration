@@ -58,10 +58,13 @@
 - This integration uses UDP port `5625` for updating the fan state locally, make sure that port is not in use by any other application and that it is not blocked by any firewall.
 - Cloud-control entries poll all fan states once per hour, using at most 24 poll
   calls in any rolling 24-hour window. A persisted integration-wide budget caps
-  all cloud traffic at 100 calls per rolling 24 hours and spaces calls by at
+  all cloud traffic at 1000 calls per rolling 24 hours and spaces calls by at
   least 210 ms (below 5 calls/second). Authentication, setup, polling, and
   commands all count toward the same budget; polling is deliberately limited so
   most of the allowance remains available for family controls.
+- The quota store uses a new window for the 1000-call tier, so a circuit breaker
+  persisted under the former 100-call account tier does not unnecessarily keep
+  cloud control paused. A fresh provider denial still opens the 24-hour breaker.
 - Successful commands publish their acknowledged state to Home Assistant
   immediately without spending a second API call. UDP updates remain the
   preferred zero-quota low-latency path when broadcasts can reach Home

@@ -20,12 +20,15 @@ from .const import CLOUD_CALL_BUDGET, DEVICE_CACHE, DOMAIN
 
 _LOGGER = getLogger(__name__)
 
-CLOUD_CALL_LIMIT = 100
+CLOUD_CALL_LIMIT = 1000
 CLOUD_POLL_CALL_LIMIT = 24
 CLOUD_CALL_WINDOW = datetime.timedelta(hours=24)
 CLOUD_MIN_CALL_INTERVAL = 0.21
 STORAGE_VERSION = 1
-STORAGE_KEY = f"{DOMAIN}.cloud_api_calls"
+# The v2 key intentionally starts a fresh rolling window after the account quota
+# increased from 100 to 1000 calls/day. If the provider still denies access,
+# the normal response-driven circuit breaker immediately protects the account.
+STORAGE_KEY = f"{DOMAIN}.cloud_api_calls_v2"
 DEVICE_CACHE_STORAGE_KEY = f"{DOMAIN}.devices"
 
 CloudCallType = Literal["auth", "setup", "poll", "command"]
@@ -102,7 +105,7 @@ class AtombergCloudCallBudget:
 
             if len(self._calls) >= CLOUD_CALL_LIMIT:
                 raise CloudApiQuotaExceeded(
-                    "Atomberg cloud API rolling limit of 100 calls per 24 hours "
+                    "Atomberg cloud API rolling limit of 1000 calls per 24 hours "
                     "has been reached"
                 )
 
