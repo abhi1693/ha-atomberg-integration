@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+from logging import getLogger
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.device_registry import format_mac
 
-from .api import AtombergCloudAPI, async_get_cloud_call_budget
+from .api import (
+    AtombergCloudAPI,
+    CloudApiQuotaExceeded,
+    async_get_cloud_call_budget,
+    get_device_cache,
+)
 from .const import (
     CONF_CONTROL_METHOD,
     CONF_REFRESH_TOKEN,
@@ -18,6 +28,8 @@ from .const import (
 )
 from .coordinator import AtombergDataUpdateCoordinator
 from .udp_listener import UDPListener
+
+_LOGGER = getLogger(__name__)
 
 CLOUD_PLATFORMS: list[Platform] = [
     Platform.FAN,
@@ -60,6 +72,21 @@ async def _async_setup_cloud_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
 
     try:
         await api.test_connection()
+    except CloudApiQuotaExceeded as err:
+        api.device_list = await get_device_cache(hass).async_load()
+        if not api.device_list:
+            api.device_list = _devices_from_registry(hass)
+        else:
+            _add_network_presence(hass, api.device_list)
+        if not api.device_list:
+            raise ConfigEntryNotReady(
+                "Atomberg cloud quota unavailable and no cached devices exist"
+            ) from err
+        await get_device_cache(hass).async_save(api.device_list)
+        _LOGGER.warning(
+            "Starting Atomberg from %d cached devices while cloud quota is unavailable",
+            len(api.device_list),
+        )
     except Exception as e:
         raise ConfigEntryNotReady("Failed to initialize Atomberg integration.") from e
 
@@ -87,6 +114,65 @@ async def _async_setup_cloud_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
     await hass.config_entries.async_forward_entry_setups(entry, CLOUD_PLATFORMS)
 
     return True
+
+
+def _devices_from_registry(hass: HomeAssistant) -> dict[str, dict]:
+    """Reconstruct cloud devices from Home Assistant's persistent registry."""
+    devices: dict[str, dict] = {}
+    registry = dr.async_get(hass)
+    for entry in registry.devices.values():
+        identifier = next(
+            (
+                value
+                for domain, value in entry.identifiers
+                if domain == DOMAIN and value.startswith("Atomberg.")
+            ),
+            None,
+        )
+        if identifier is None:
+            continue
+        device_id = identifier.removeprefix("Atomberg.")
+        devices[device_id] = {
+            "device_id": device_id,
+            "color": "",
+            "series": "",
+            "model": entry.model or "Atomberg fan",
+            "name": entry.name_by_user or entry.name or "Atomberg Fan",
+            "state": {
+                "is_online": True,
+                "power": False,
+                "speed": 1,
+                "sleep": False,
+                "led": False,
+                "timer_hours": 0,
+                "timer_time_elapsed_mins": 0,
+            },
+        }
+    _add_network_presence(hass, devices)
+    return devices
+
+
+def _add_network_presence(hass: HomeAssistant, devices: dict[str, dict]) -> None:
+    """Attach LAN addresses from network device trackers without API calls."""
+    entity_registry = er.async_get(hass)
+    tracker_entity_ids = {
+        entry.entity_id
+        for entry in entity_registry.entities.values()
+        if entry.domain == "device_tracker"
+    }
+    trackers_by_mac = {}
+    for entity_id in tracker_entity_ids:
+        if (state := hass.states.get(entity_id)) is None:
+            continue
+        mac = state.attributes.get("mac")
+        ip_address = state.attributes.get("ip")
+        if mac and ip_address:
+            trackers_by_mac[format_mac(mac)] = ip_address
+
+    for device_id, data in devices.items():
+        if ip_address := trackers_by_mac.get(format_mac(device_id)):
+            data["ip_address"] = ip_address
+            data["state"]["is_online"] = True
 
 
 async def _async_setup_ir_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

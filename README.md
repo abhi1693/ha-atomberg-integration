@@ -66,6 +66,10 @@
   immediately without spending a second API call. UDP updates remain the
   preferred zero-quota low-latency path when broadcasts can reach Home
   Assistant.
+- During a cloud quota outage, the integration starts from its persisted device
+  cache (or reconstructs it once from Home Assistant's device registry) instead
+  of leaving every fan unavailable. Matching network device trackers supply LAN
+  addresses, allowing commands to fall back to local UDP without cloud calls.
 
 ## Control Methods
 

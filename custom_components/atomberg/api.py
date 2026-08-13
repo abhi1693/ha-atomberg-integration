@@ -16,7 +16,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util.dt import utcnow
 from requests import Response
 
-from .const import CLOUD_CALL_BUDGET, DOMAIN
+from .const import CLOUD_CALL_BUDGET, DEVICE_CACHE, DOMAIN
 
 _LOGGER = getLogger(__name__)
 
@@ -26,6 +26,7 @@ CLOUD_CALL_WINDOW = datetime.timedelta(hours=24)
 CLOUD_MIN_CALL_INTERVAL = 0.21
 STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.cloud_api_calls"
+DEVICE_CACHE_STORAGE_KEY = f"{DOMAIN}.devices"
 
 CloudCallType = Literal["auth", "setup", "poll", "command"]
 
@@ -129,6 +130,40 @@ class AtombergCloudCallBudget:
             self._blocked_until = (utcnow() + CLOUD_CALL_WINDOW).timestamp()
             await self._async_save()
 
+    @property
+    def blocked(self) -> bool:
+        """Return whether cloud calls are currently circuit-broken."""
+        self._prune(utcnow().timestamp())
+        return self._blocked_until is not None or len(self._calls) >= CLOUD_CALL_LIMIT
+
+
+class AtombergDeviceCache:
+    """Persist cloud device metadata and last known state for offline startup."""
+
+    def __init__(self, hass: HomeAssistant) -> None:
+        """Initialize the device cache."""
+        self._store = Store[dict[str, Any]](
+            hass, STORAGE_VERSION, DEVICE_CACHE_STORAGE_KEY
+        )
+
+    async def async_load(self) -> dict[str, dict]:
+        """Load validated cached devices."""
+        stored = await self._store.async_load() or {}
+        devices = stored.get("devices", {})
+        if not isinstance(devices, dict):
+            return {}
+        return {
+            device_id: data
+            for device_id, data in devices.items()
+            if isinstance(device_id, str)
+            and isinstance(data, dict)
+            and isinstance(data.get("state"), dict)
+        }
+
+    async def async_save(self, devices: dict[str, dict]) -> None:
+        """Persist device metadata and state."""
+        await self._store.async_save({"devices": devices})
+
 
 async def async_get_cloud_call_budget(
     hass: HomeAssistant,
@@ -142,6 +177,16 @@ async def async_get_cloud_call_budget(
     await budget.async_load()
     domain_data[CLOUD_CALL_BUDGET] = budget
     return budget
+
+
+def get_device_cache(hass: HomeAssistant) -> AtombergDeviceCache:
+    """Return the shared Atomberg device cache."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if cache := domain_data.get(DEVICE_CACHE):
+        return cache
+    cache = AtombergDeviceCache(hass)
+    domain_data[DEVICE_CACHE] = cache
+    return cache
 
 
 class AtombergCloudAPI:
@@ -306,6 +351,7 @@ class AtombergCloudAPI:
                 states.remove(state)
                 self.device_list[state.pop("device_id")] = {**dev, "state": state}
             _LOGGER.info("Found %d atomberg devices", len(self.device_list))
+            await get_device_cache(self._hass).async_save(self.device_list)
             status = True
         else:  # noqa: RET505
             _LOGGER.error(

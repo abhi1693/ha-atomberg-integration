@@ -37,7 +37,12 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
         self.api = api
         self.udp_listener = udp_listener
         self.devices = [
-            AtombergDevice(data=data, api=self.api, config_entry=self.config_entry)
+            AtombergDevice(
+                data=data,
+                api=self.api,
+                hass=self.hass,
+                config_entry=self.config_entry,
+            )
             for data in self.api.device_list.values()
         ]
 

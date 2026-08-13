@@ -11,7 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import format_mac
 
-from .api import AtombergCloudAPI
+from .api import AtombergCloudAPI, CloudApiQuotaExceeded
 from .const import CONF_USE_CLOUD_CONTROL
 
 _LOGGER = getLogger(__name__)
@@ -47,6 +47,7 @@ class AtombergDevice:
         self,
         data: dict[str, Any],
         api: AtombergCloudAPI,
+        hass: HomeAssistant,
         config_entry: ConfigEntry = None,
     ) -> None:
         """Init Atomberg device."""
@@ -56,9 +57,10 @@ class AtombergDevice:
         self._model = data["model"]
         self._name = data["name"]
         self._api = api
+        self._hass = hass
         self._state: dict = data["state"]
         self._last_seen: int = None
-        self._ip_addr: str = None
+        self._ip_addr: str = data.get("ip_address")
         self._options = config_entry.options if config_entry else {}
 
         # Add options update listener
@@ -139,28 +141,53 @@ class AtombergDevice:
 
     async def _async_send_command(self, command: dict) -> bool:
         """Send command to the device."""
-        if not self._options.get(CONF_USE_CLOUD_CONTROL, False) and self.ip_address:
-            message = json.dumps(command).encode()
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sent_bytes = sock.sendto(message, (self.ip_address, 5600))
-                res = sent_bytes > 0
-                if res:
-                    _LOGGER.debug(
-                        "Command sent to %s (%s): %s",
-                        self.name,
-                        self.ip_address,
-                        command,
-                    )
-                else:
-                    _LOGGER.error(
-                        "Failed to send command to %s (%s): %s",
-                        self.name,
-                        self.ip_address,
-                        command,
-                    )
-                return res
-        else:
+        self._resolve_ip_address()
+        use_cloud = self._options.get(CONF_USE_CLOUD_CONTROL, False)
+        if not use_cloud and self.ip_address:
+            return self._send_local_command(command)
+
+        try:
             return await self._api.async_send_command(self.id, command)
+        except CloudApiQuotaExceeded:
+            if not self.ip_address:
+                raise
+            _LOGGER.warning(
+                "Atomberg cloud quota unavailable; sending %s command locally",
+                self.name,
+            )
+            return self._send_local_command(command)
+
+    def _resolve_ip_address(self) -> None:
+        """Resolve the fan IP from a matching network tracker without cloud I/O."""
+        if self.ip_address:
+            return
+        for state in self._hass.states.async_all("device_tracker"):
+            if state.attributes.get("mac", "").lower() != self.mac.lower():
+                continue
+            if ip_address := state.attributes.get("ip"):
+                self.update_ip_address(ip_address)
+                return
+
+    def _send_local_command(self, command: dict) -> bool:
+        """Send one command directly to the fan over the LAN."""
+        message = json.dumps(command).encode()
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sent_bytes = sock.sendto(message, (self.ip_address, 5600))
+        if sent_bytes > 0:
+            _LOGGER.debug(
+                "Command sent to %s (%s): %s",
+                self.name,
+                self.ip_address,
+                command,
+            )
+            return True
+        _LOGGER.error(
+            "Failed to send command to %s (%s): %s",
+            self.name,
+            self.ip_address,
+            command,
+        )
+        return False
 
     async def async_turn_on(self):
         """Turn on."""
