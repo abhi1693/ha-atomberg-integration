@@ -250,7 +250,13 @@ class AtombergDevice:
         cmd = {ATTR_SLEEP: True}
         if await self._async_send_command(cmd):
             _LOGGER.debug("%s: turned on sleep mode", self.name)
-            self.update_state(cmd)
+            self.update_state(
+                {
+                    **cmd,
+                    ATTR_TIMER_HOURS: 0,
+                    ATTR_TIMER_TIME_ELAPSED_MINS: 0,
+                }
+            )
             return True
         return False
 
@@ -268,8 +274,14 @@ class AtombergDevice:
         if value not in range(5):
             raise ValueError("Value must in range of 0-4.")
         if await self._async_send_command({"timer": value}):
-            _LOGGER.debug("%s: set sleep mode: %d", self.name, value)
-            self.update_state({ATTR_TIMER_HOURS: TIMER_MAPPING[value][0]})
+            _LOGGER.debug("%s: set timer: %d", self.name, value)
+            state = {
+                ATTR_TIMER_HOURS: TIMER_MAPPING[value][0],
+                ATTR_TIMER_TIME_ELAPSED_MINS: 0,
+            }
+            if value:
+                state[ATTR_SLEEP] = False
+            self.update_state(state)
             return True
         return False
 

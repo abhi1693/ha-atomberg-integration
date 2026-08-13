@@ -69,6 +69,9 @@
   immediately without spending a second API call. UDP updates remain the
   preferred zero-quota low-latency path when broadcasts can reach Home
   Assistant.
+- Sleep mode and Timer are mutually exclusive on the fan. Enabling either mode
+  immediately clears the other mode in Home Assistant from the same acknowledged
+  command, without spending an additional API call.
 - Turning on with a requested percentage combines power and one of the six
   discrete speeds into a single command, allowing quota-conscious dashboards
   to select a speed while the fan is off without spending two API calls.
