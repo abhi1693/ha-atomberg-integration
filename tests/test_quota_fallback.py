@@ -8,6 +8,7 @@ from homeassistant.const import STATE_HOME
 
 from custom_components.atomberg import _devices_from_registry
 from custom_components.atomberg.api import CloudApiQuotaExceeded
+from custom_components.atomberg.coordinator import AtombergDataUpdateCoordinator
 from custom_components.atomberg.device import AtombergDevice
 
 OFFICE_DEVICE_ID = "50787d8798cc"
@@ -173,6 +174,38 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
             await device.async_turn_on()
 
         udp_socket.assert_not_called()
+
+    def test_tracker_update_restores_powered_fan(self):
+        """A late UniFi tracker update must restore a cached fan without cloud I/O."""
+        coordinator = object.__new__(AtombergDataUpdateCoordinator)
+        device = Mock()
+        device.id = OFFICE_DEVICE_ID
+        device.mac = OFFICE_MAC
+        device.state = {"is_online": True, "power": False, "speed": 2}
+        coordinator.devices = [device]
+        coordinator._devices_by_mac = {OFFICE_MAC: device}
+        coordinator._cloud_state_available = False
+        coordinator.async_set_updated_data = Mock()
+        state = Mock()
+        state.state = STATE_HOME
+        state.attributes = {"mac": OFFICE_MAC, "ip": OFFICE_IP}
+        event = Mock()
+        event.data = {
+            "entity_id": "device_tracker.atomberg",
+            "old_state": None,
+            "new_state": state,
+        }
+
+        coordinator._async_handle_tracker_state(event)
+
+        device.update_ip_address.assert_called_once_with(OFFICE_IP)
+        device.update_state.assert_called_once_with({"is_online": True})
+        coordinator.async_set_updated_data.assert_called_once_with(
+            {
+                "source": "presence",
+                "devices": {OFFICE_DEVICE_ID: device.state},
+            }
+        )
 
 
 if __name__ == "__main__":

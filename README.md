@@ -74,6 +74,8 @@
   without current presence are marked unavailable until LAN presence or an
   authoritative cloud refresh returns. Tracker addresses are resolved again
   before each local fallback so VLAN migrations cannot leave stale targets.
+  Late network-tracker updates also restore a powered fan automatically when
+  Home Assistant starts while the cloud circuit is open.
 
 ## Control Methods
 

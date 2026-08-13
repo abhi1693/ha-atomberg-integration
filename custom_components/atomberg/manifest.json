@@ -9,5 +9,5 @@
   "documentation": "https://github.com/abhi1693/ha-atomberg-integration",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/abhi1693/ha-atomberg-integration/issues",
-  "version": "2.2.8"
+  "version": "2.2.9"
 }
