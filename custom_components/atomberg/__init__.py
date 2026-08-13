@@ -5,7 +5,7 @@ from __future__ import annotations
 from logging import getLogger
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_API_KEY, Platform
+from homeassistant.const import CONF_API_KEY, STATE_HOME, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr
@@ -139,7 +139,7 @@ def _devices_from_registry(hass: HomeAssistant) -> dict[str, dict]:
             "model": entry.model or "Atomberg fan",
             "name": entry.name_by_user or entry.name or "Atomberg Fan",
             "state": {
-                "is_online": True,
+                "is_online": False,
                 "power": False,
                 "speed": 1,
                 "sleep": False,
@@ -166,13 +166,16 @@ def _add_network_presence(hass: HomeAssistant, devices: dict[str, dict]) -> None
             continue
         mac = state.attributes.get("mac")
         ip_address = state.attributes.get("ip")
-        if mac and ip_address:
+        if mac and ip_address and state.state == STATE_HOME:
             trackers_by_mac[format_mac(mac)] = ip_address
 
     for device_id, data in devices.items():
         if ip_address := trackers_by_mac.get(format_mac(device_id)):
             data["ip_address"] = ip_address
             data["state"]["is_online"] = True
+            continue
+        data.pop("ip_address", None)
+        data["state"]["is_online"] = False
 
 
 async def _async_setup_ir_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

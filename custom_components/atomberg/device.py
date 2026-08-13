@@ -8,6 +8,7 @@ from typing import Any
 
 from homeassistant.components.light import ATTR_BRIGHTNESS
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import STATE_HOME
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import format_mac
 
@@ -128,7 +129,7 @@ class AtombergDevice:
         """Update last seen timestamp."""
         self._last_seen = value
 
-    def update_ip_address(self, value: str):
+    def update_ip_address(self, value: str | None):
         """Update IP address."""
         if self._ip_addr != value:
             _LOGGER.debug("IP address updated for %s: %s", self.name, value)
@@ -142,7 +143,7 @@ class AtombergDevice:
     async def _async_send_command(self, command: dict) -> bool:
         """Send command to the device."""
         self._resolve_ip_address()
-        use_cloud = self._options.get(CONF_USE_CLOUD_CONTROL, False)
+        use_cloud = self._options.get(CONF_USE_CLOUD_CONTROL, True)
         if not use_cloud and self.ip_address:
             return self._send_local_command(command)
 
@@ -159,14 +160,14 @@ class AtombergDevice:
 
     def _resolve_ip_address(self) -> None:
         """Resolve the fan IP from a matching network tracker without cloud I/O."""
-        if self.ip_address:
-            return
+        ip_address = None
         for state in self._hass.states.async_all("device_tracker"):
             if state.attributes.get("mac", "").lower() != self.mac.lower():
                 continue
-            if ip_address := state.attributes.get("ip"):
-                self.update_ip_address(ip_address)
-                return
+            if state.state == STATE_HOME:
+                ip_address = state.attributes.get("ip")
+            break
+        self.update_ip_address(ip_address)
 
     def _send_local_command(self, command: dict) -> bool:
         """Send one command directly to the fan over the LAN."""

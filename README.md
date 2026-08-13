@@ -66,10 +66,14 @@
   immediately without spending a second API call. UDP updates remain the
   preferred zero-quota low-latency path when broadcasts can reach Home
   Assistant.
-- During a cloud quota outage, the integration starts from its persisted device
-  cache (or reconstructs it once from Home Assistant's device registry) instead
-  of leaving every fan unavailable. Matching network device trackers supply LAN
-  addresses, allowing commands to fall back to local UDP without cloud calls.
+- Cloud control is the default for every cloud entry and remains the first
+  choice for every fan. During a cloud quota outage, the integration starts
+  from its persisted device cache (or reconstructs it once from Home
+  Assistant's device registry). Fans with current network presence remain
+  available and may fall back to local UDP without cloud calls; cached fans
+  without current presence are marked unavailable until LAN presence or an
+  authoritative cloud refresh returns. Tracker addresses are resolved again
+  before each local fallback so VLAN migrations cannot leave stale targets.
 
 ## Control Methods
 

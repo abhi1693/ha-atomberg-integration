@@ -3,13 +3,16 @@
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+from homeassistant.const import STATE_HOME
+
 from custom_components.atomberg import _devices_from_registry
 from custom_components.atomberg.api import CloudApiQuotaExceeded
 from custom_components.atomberg.device import AtombergDevice
 
 OFFICE_DEVICE_ID = "50787d8798cc"
 OFFICE_MAC = "50:78:7d:87:98:cc"
-OFFICE_IP = "192.168.4.141"
+OFFICE_IP = "192.168.5.141"
 
 
 class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
@@ -32,6 +35,7 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
         entity_registry.entities = {"tracker": tracker}
 
         tracker_state = Mock()
+        tracker_state.state = STATE_HOME
         tracker_state.attributes = {"mac": OFFICE_MAC, "ip": OFFICE_IP}
         hass = Mock()
         hass.states.get.return_value = tracker_state
@@ -50,12 +54,41 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
         assert devices[OFFICE_DEVICE_ID]["ip_address"] == OFFICE_IP
         assert devices[OFFICE_DEVICE_ID]["state"]["is_online"] is True
 
+    def test_registry_cache_marks_unpowered_fan_offline(self):
+        """A cached fan without current network presence must be unavailable."""
+        device = Mock()
+        device.identifiers = {("atomberg", f"Atomberg.{OFFICE_DEVICE_ID}")}
+        device.model = "aris_gladius"
+        device.name_by_user = None
+        device.name = "Office Fan"
+        device_registry = Mock()
+        device_registry.devices = {"office": device}
+        entity_registry = Mock()
+        entity_registry.entities = {}
+        hass = Mock()
+
+        with (
+            patch(
+                "custom_components.atomberg.dr.async_get", return_value=device_registry
+            ),
+            patch(
+                "custom_components.atomberg.er.async_get", return_value=entity_registry
+            ),
+        ):
+            devices = _devices_from_registry(hass)
+
+        assert devices[OFFICE_DEVICE_ID]["state"]["is_online"] is False
+        assert "ip_address" not in devices[OFFICE_DEVICE_ID]
+
     async def test_cloud_quota_falls_back_to_local_udp(self):
         """A circuit-broken cloud command must use the known LAN address."""
         api = Mock()
         api.async_send_command = AsyncMock(side_effect=CloudApiQuotaExceeded)
         hass = Mock()
-        hass.states.async_all.return_value = []
+        tracker_state = Mock()
+        tracker_state.state = STATE_HOME
+        tracker_state.attributes = {"mac": OFFICE_MAC, "ip": OFFICE_IP}
+        hass.states.async_all.return_value = [tracker_state]
         device = AtombergDevice(
             data={
                 "device_id": OFFICE_DEVICE_ID,
@@ -63,7 +96,7 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
                 "series": "",
                 "model": "aris_gladius",
                 "name": "Office Fan",
-                "ip_address": OFFICE_IP,
+                "ip_address": "192.168.4.141",
                 "state": {"is_online": True, "power": False, "speed": 2},
             },
             api=api,
@@ -84,7 +117,62 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         assert changed is True
         assert device.state["power"] is True
-        udp_socket.sendto.assert_called_once()
+        udp_socket.sendto.assert_called_once_with(b'{"power": true}', (OFFICE_IP, 5600))
+
+    async def test_cloud_control_is_default(self):
+        """Cloud commands are preferred even before options are explicitly saved."""
+        api = Mock()
+        api.async_send_command = AsyncMock(return_value=True)
+        hass = Mock()
+        hass.states.async_all.return_value = []
+        device = AtombergDevice(
+            data={
+                "device_id": OFFICE_DEVICE_ID,
+                "color": "",
+                "series": "",
+                "model": "aris_gladius",
+                "name": "Office Fan",
+                "state": {"is_online": False, "power": False, "speed": 2},
+            },
+            api=api,
+            hass=hass,
+        )
+
+        changed = await device.async_turn_on()
+
+        assert changed is True
+        api.async_send_command.assert_awaited_once_with(
+            OFFICE_DEVICE_ID, {"power": True}
+        )
+
+    async def test_unpowered_fan_does_not_use_stale_local_address(self):
+        """A quota failure must not send locally when the fan is no longer present."""
+        api = Mock()
+        api.async_send_command = AsyncMock(side_effect=CloudApiQuotaExceeded)
+        hass = Mock()
+        hass.states.async_all.return_value = []
+        device = AtombergDevice(
+            data={
+                "device_id": OFFICE_DEVICE_ID,
+                "color": "",
+                "series": "",
+                "model": "aris_gladius",
+                "name": "Office Fan",
+                "ip_address": "192.168.4.141",
+                "state": {"is_online": False, "power": False, "speed": 2},
+            },
+            api=api,
+            hass=hass,
+        )
+        device._options = {"use_cloud_control": True}
+
+        with (
+            patch("custom_components.atomberg.device.socket.socket") as udp_socket,
+            pytest.raises(CloudApiQuotaExceeded),
+        ):
+            await device.async_turn_on()
+
+        udp_socket.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -55,7 +55,7 @@ CLOUD_DATA_SCHEMA = vol.Schema(
 
 OPTIONS_SCHEMA = vol.Schema(
     {
-        vol.Required(CONF_USE_CLOUD_CONTROL, default=False): cv.boolean,
+        vol.Required(CONF_USE_CLOUD_CONTROL, default=True): cv.boolean,
     }
 )
 
