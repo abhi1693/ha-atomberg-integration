@@ -146,8 +146,8 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
             OFFICE_DEVICE_ID, {"power": True}
         )
 
-    async def test_turn_on_at_speed_uses_one_cloud_command(self):
-        """Power and selected speed must share the same provider call."""
+    async def test_turn_on_at_speed_uses_separate_cloud_commands(self):
+        """Power and speed must use Atomberg's documented command shapes."""
         api = Mock()
         api.async_send_command = AsyncMock(return_value=True)
         hass = Mock()
@@ -170,9 +170,36 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
         assert changed is True
         assert device.state["power"] is True
         assert device.state["speed"] == 4
-        api.async_send_command.assert_awaited_once_with(
-            OFFICE_DEVICE_ID, {"power": True, "speed": 4}
+        assert api.async_send_command.await_args_list == [
+            unittest.mock.call(OFFICE_DEVICE_ID, {"power": True}),
+            unittest.mock.call(OFFICE_DEVICE_ID, {"speed": 4}),
+        ]
+
+    async def test_turn_on_at_speed_preserves_partial_power_state(self):
+        """A rejected speed command must not hide a successful power command."""
+        api = Mock()
+        api.async_send_command = AsyncMock(side_effect=[True, False])
+        hass = Mock()
+        hass.states.async_all.return_value = []
+        device = AtombergDevice(
+            data={
+                "device_id": OFFICE_DEVICE_ID,
+                "color": "",
+                "series": "",
+                "model": "aris_gladius",
+                "name": "Office Fan",
+                "state": {"is_online": True, "power": False, "speed": 2},
+            },
+            api=api,
+            hass=hass,
         )
+
+        changed = await device.async_turn_on_at_speed(4)
+
+        assert changed is True
+        assert device.state["power"] is True
+        assert device.state["speed"] == 2
+        assert device.last_command_used_cloud is True
 
     async def test_unpowered_fan_does_not_use_stale_local_address(self):
         """A quota failure must not send locally when the fan is no longer present."""

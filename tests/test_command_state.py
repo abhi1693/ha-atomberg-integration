@@ -1,7 +1,7 @@
 """Regression tests for immediate state publication after commands."""
 
 import unittest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 from custom_components.atomberg.coordinator import AtombergDataUpdateCoordinator
 from custom_components.atomberg.device import (
@@ -27,8 +27,8 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
 
         entity.publish_command_state.assert_called_once_with()
 
-    async def test_turn_on_with_percentage_uses_one_combined_command(self):
-        """A speed selection while off must not spend two provider calls."""
+    async def test_turn_on_with_percentage_uses_split_device_command(self):
+        """A speed selection while off delegates the provider-safe sequence."""
         entity = object.__new__(AtombergFanEntity)
         entity._device = Mock()
         entity._device.async_turn_on_at_speed = AsyncMock(return_value=True)
@@ -50,6 +50,8 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
         device = Mock()
         device.id = "office"
         device.state = {"power": True, "speed": 3}
+        device.last_command_used_cloud = True
+        coordinator.async_schedule_command_reconciliation = Mock()
 
         coordinator.async_publish_device_state(device)
 
@@ -62,6 +64,87 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
                 },
             }
         )
+        coordinator.async_schedule_command_reconciliation.assert_called_once_with()
+
+    def test_publish_local_command_does_not_schedule_cloud_confirmation(self):
+        """A local command relies on UDP state instead of spending cloud quota."""
+        coordinator = object.__new__(AtombergDataUpdateCoordinator)
+        coordinator.data = {"source": "cloud", "devices": {}}
+        coordinator.async_set_updated_data = Mock()
+        coordinator.async_schedule_command_reconciliation = Mock()
+        device = Mock()
+        device.id = "office"
+        device.state = {"power": True, "speed": 3}
+        device.last_command_used_cloud = False
+
+        coordinator.async_publish_device_state(device)
+
+        coordinator.async_schedule_command_reconciliation.assert_not_called()
+
+    def test_command_confirmation_is_debounced(self):
+        """Rapid household controls must share one delayed cloud refresh."""
+        coordinator = object.__new__(AtombergDataUpdateCoordinator)
+        coordinator.hass = Mock()
+        coordinator._cancel_command_reconciliation = None
+        first_cancel = Mock()
+        second_cancel = Mock()
+
+        with patch(
+            "custom_components.atomberg.coordinator.async_call_later",
+            side_effect=[first_cancel, second_cancel],
+        ) as call_later:
+            coordinator.async_schedule_command_reconciliation()
+            coordinator.async_schedule_command_reconciliation()
+
+        first_cancel.assert_called_once_with()
+        second_cancel.assert_not_called()
+        assert call_later.call_count == 2
+
+    async def test_command_confirmation_publishes_and_persists_cloud_state(self):
+        """Authoritative cloud state replaces and persists optimistic state."""
+        coordinator = object.__new__(AtombergDataUpdateCoordinator)
+        coordinator.hass = Mock()
+        coordinator.api = Mock()
+        coordinator.api.device_list = {
+            "office": {"name": "Office Fan", "state": {"speed": 1}}
+        }
+        coordinator.api.async_get_device_state = AsyncMock(
+            return_value=[
+                {
+                    "device_id": "office",
+                    "is_online": True,
+                    "power": True,
+                    "speed": 4,
+                }
+            ]
+        )
+        device = Mock()
+        device.id = "office"
+        device.state = {
+            "is_online": True,
+            "power": True,
+            "speed": 4,
+        }
+        coordinator.devices = [device]
+        coordinator._cloud_state_available = False
+        cache = Mock()
+        cache.async_save = AsyncMock()
+
+        with patch(
+            "custom_components.atomberg.coordinator.get_device_cache",
+            return_value=cache,
+        ):
+            data = await coordinator._async_refresh_cloud_state(
+                "command", "command-confirmed"
+            )
+
+        coordinator.api.async_get_device_state.assert_awaited_once_with(
+            ["office"], call_type="command"
+        )
+        device.update_state.assert_called_once_with(data["devices"]["office"])
+        cache.async_save.assert_awaited_once_with(coordinator.api.device_list)
+        assert data["source"] == "command-confirmed"
+        assert coordinator.api.device_list["office"]["state"]["speed"] == 4
 
     async def test_sleep_mode_clears_timer_in_acknowledged_state(self):
         """The fan cancels its timer when sleep mode is enabled."""
@@ -76,11 +159,11 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
 
         changed = await device.async_turn_on_sleep_mode()
 
-        self.assertTrue(changed)
+        assert changed
         device._async_send_command.assert_awaited_once_with({ATTR_SLEEP: True})
-        self.assertTrue(device.state[ATTR_SLEEP])
-        self.assertEqual(device.state[ATTR_TIMER_HOURS], 0)
-        self.assertEqual(device.state[ATTR_TIMER_TIME_ELAPSED_MINS], 0)
+        assert device.state[ATTR_SLEEP]
+        assert device.state[ATTR_TIMER_HOURS] == 0
+        assert device.state[ATTR_TIMER_TIME_ELAPSED_MINS] == 0
 
     async def test_timer_clears_sleep_mode_in_acknowledged_state(self):
         """The fan cancels sleep mode when a timer is enabled."""
@@ -95,11 +178,11 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
 
         changed = await device.async_set_timer(1)
 
-        self.assertTrue(changed)
+        assert changed
         device._async_send_command.assert_awaited_once_with({"timer": 1})
-        self.assertFalse(device.state[ATTR_SLEEP])
-        self.assertEqual(device.state[ATTR_TIMER_HOURS], 1)
-        self.assertEqual(device.state[ATTR_TIMER_TIME_ELAPSED_MINS], 0)
+        assert not device.state[ATTR_SLEEP]
+        assert device.state[ATTR_TIMER_HOURS] == 1
+        assert device.state[ATTR_TIMER_TIME_ELAPSED_MINS] == 0
 
     async def test_cancelling_timer_preserves_sleep_mode(self):
         """Turning a timer off must not also disable sleep mode."""
@@ -114,10 +197,10 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
 
         changed = await device.async_set_timer(0)
 
-        self.assertTrue(changed)
-        self.assertTrue(device.state[ATTR_SLEEP])
-        self.assertEqual(device.state[ATTR_TIMER_HOURS], 0)
-        self.assertEqual(device.state[ATTR_TIMER_TIME_ELAPSED_MINS], 0)
+        assert changed
+        assert device.state[ATTR_SLEEP]
+        assert device.state[ATTR_TIMER_HOURS] == 0
+        assert device.state[ATTR_TIMER_TIME_ELAPSED_MINS] == 0
 
 
 if __name__ == "__main__":

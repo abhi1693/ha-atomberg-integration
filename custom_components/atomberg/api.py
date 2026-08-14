@@ -366,7 +366,7 @@ class AtombergCloudAPI:
     async def async_get_device_state(
         self,
         device_ids: list[str] | None = None,
-        call_type: Literal["setup", "poll"] = "poll",
+        call_type: Literal["setup", "poll", "command"] = "poll",
     ) -> list[dict] | None:
         """Get state of all/single device(s)."""
         resp = await self.async_make_request(

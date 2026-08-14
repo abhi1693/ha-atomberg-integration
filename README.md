@@ -65,16 +65,19 @@
 - The quota store uses a new window for the 1000-call tier, so a circuit breaker
   persisted under the former 100-call account tier does not unnecessarily keep
   cloud control paused. A fresh provider denial still opens the 24-hour breaker.
-- Successful commands publish their acknowledged state to Home Assistant
-  immediately without spending a second API call. UDP updates remain the
-  preferred zero-quota low-latency path when broadcasts can reach Home
-  Assistant.
+- Successful commands publish their requested state to Home Assistant
+  immediately. Cloud commands schedule one debounced all-fan verification two
+  seconds later, so several controls share a single call and Atomberg's
+  authoritative state replaces any optimistic mismatch. Confirmed cloud state
+  is also persisted for quota-safe startup. UDP updates remain the preferred
+  zero-quota low-latency path when broadcasts can reach Home Assistant.
 - Sleep mode and Timer are mutually exclusive on the fan. Enabling either mode
   immediately clears the other mode in Home Assistant from the same acknowledged
   command, without spending an additional API call.
-- Turning on with a requested percentage combines power and one of the six
-  discrete speeds into a single command, allowing quota-conscious dashboards
-  to select a speed while the fan is off without spending two API calls.
+- Turning on with a requested percentage sends separate power and speed
+  commands, matching Atomberg's documented single-command payloads. The
+  debounced verification catches devices that accept a cloud request without
+  applying the requested state.
 - Cloud control is the default for every cloud entry and remains the first
   choice for every fan. During a cloud quota outage, the integration starts
   from its persisted device cache (or reconstructs it once from Home

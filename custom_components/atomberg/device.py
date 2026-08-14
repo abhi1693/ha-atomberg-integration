@@ -63,6 +63,7 @@ class AtombergDevice:
         self._last_seen: int = None
         self._ip_addr: str = data.get("ip_address")
         self._options = config_entry.options if config_entry else {}
+        self._last_command_used_cloud = False
 
         # Add options update listener
         if config_entry:
@@ -125,6 +126,11 @@ class AtombergDevice:
         """Get MAC address."""
         return format_mac(self.id)
 
+    @property
+    def last_command_used_cloud(self) -> bool:
+        """Return whether the latest successful command used the cloud API."""
+        return self._last_command_used_cloud
+
     def update_last_seen(self, value: float):
         """Update last seen timestamp."""
         self._last_seen = value
@@ -145,10 +151,12 @@ class AtombergDevice:
         self._resolve_ip_address()
         use_cloud = self._options.get(CONF_USE_CLOUD_CONTROL, True)
         if not use_cloud and self.ip_address:
-            return self._send_local_command(command)
+            changed = self._send_local_command(command)
+            self._last_command_used_cloud = False
+            return changed
 
         try:
-            return await self._api.async_send_command(self.id, command)
+            changed = await self._api.async_send_command(self.id, command)
         except CloudApiQuotaExceeded:
             if not self.ip_address:
                 raise
@@ -156,7 +164,12 @@ class AtombergDevice:
                 "Atomberg cloud quota unavailable; sending %s command locally",
                 self.name,
             )
-            return self._send_local_command(command)
+            changed = self._send_local_command(command)
+            self._last_command_used_cloud = False
+            return changed
+        else:
+            self._last_command_used_cloud = changed
+            return changed
 
     def _resolve_ip_address(self) -> None:
         """Resolve the fan IP from a matching network tracker without cloud I/O."""
@@ -203,12 +216,20 @@ class AtombergDevice:
         """Turn on at one of the fan's six discrete speeds."""
         if value not in range(1, 7):
             raise ValueError("Value must in range of 1-6.")
-        cmd = {ATTR_POWER: True, ATTR_SPEED: value}
-        if await self._async_send_command(cmd):
-            _LOGGER.debug("%s: turned on at speed %d", self.name, value)
-            self.update_state(cmd)
+        power_cmd = {ATTR_POWER: True}
+        if not await self._async_send_command(power_cmd):
+            return False
+
+        power_used_cloud = self.last_command_used_cloud
+        self.update_state(power_cmd)
+        speed_cmd = {ATTR_SPEED: value}
+        if not await self._async_send_command(speed_cmd):
+            self._last_command_used_cloud = power_used_cloud
             return True
-        return False
+
+        _LOGGER.debug("%s: turned on at speed %d", self.name, value)
+        self.update_state(speed_cmd)
+        return True
 
     async def async_turn_off(self):
         """Turn off."""
