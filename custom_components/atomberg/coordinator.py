@@ -1,6 +1,7 @@
 """Data update coordinator for the Atomberg integration."""
 
 from datetime import timedelta
+from functools import partial
 from logging import getLogger
 from typing import Literal
 
@@ -54,6 +55,7 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
         self._devices_by_mac = {device.mac: device for device in self.devices}
         self._cloud_state_available = False
         self._cancel_command_reconciliation = None
+        self._command_revision = 0
 
         # Add callback on udp listener
         self.udp_listener.add_callback(self.config_entry, self.async_set_updated_data)
@@ -69,8 +71,11 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
         return await self._async_refresh_cloud_state("poll", "cloud")
 
     async def _async_refresh_cloud_state(
-        self, call_type: Literal["setup", "poll", "command"], source: str
-    ) -> dict:
+        self,
+        call_type: Literal["setup", "poll", "command"],
+        source: str,
+        expected_command_revision: int | None = None,
+    ) -> dict | None:
         """Fetch, publish and persist authoritative cloud device states."""
         device_ids = [device.id for device in self.devices]
         try:
@@ -88,6 +93,16 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
             raise UpdateFailed("Atomberg cloud state response was unsuccessful")
 
         self._cloud_state_available = True
+        if (
+            expected_command_revision is not None
+            and expected_command_revision != self._command_revision
+        ):
+            _LOGGER.debug(
+                "Discarding Atomberg cloud state for superseded command revision %d",
+                expected_command_revision,
+            )
+            return None
+
         states_by_id = {state["device_id"]: state for state in states}
         for device in self.devices:
             if state := states_by_id.get(device.id):
@@ -102,10 +117,11 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
     def async_schedule_command_reconciliation(self) -> None:
         """Debounce one authoritative cloud refresh after successful commands."""
         self._async_cancel_command_reconciliation()
+        command_revision = self._command_revision
         self._cancel_command_reconciliation = async_call_later(
             self.hass,
             COMMAND_RECONCILE_DELAY_SECONDS,
-            self._async_reconcile_command_states,
+            partial(self._async_reconcile_command_states, command_revision),
         )
 
     @callback
@@ -116,13 +132,21 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
         self._cancel_command_reconciliation()
         self._cancel_command_reconciliation = None
 
-    async def _async_reconcile_command_states(self, _now) -> None:
+    async def _async_reconcile_command_states(
+        self, command_revision: int, _now
+    ) -> None:
         """Replace optimistic command state with authoritative cloud state."""
         self._cancel_command_reconciliation = None
         try:
-            data = await self._async_refresh_cloud_state("command", "command-confirmed")
+            data = await self._async_refresh_cloud_state(
+                "command",
+                "command-confirmed",
+                expected_command_revision=command_revision,
+            )
         except UpdateFailed as err:
             _LOGGER.warning("Unable to confirm Atomberg command state: %s", err)
+            return
+        if data is None:
             return
         self.async_set_updated_data(data)
 
@@ -158,6 +182,7 @@ class AtombergDataUpdateCoordinator(DataUpdateCoordinator):
     @callback
     def async_publish_device_state(self, device: AtombergDevice) -> None:
         """Publish requested state now and schedule cloud confirmation."""
+        self._command_revision += 1
         devices = dict((self.data or {}).get("devices", {}))
         devices[device.id] = device.state
         self.async_set_updated_data({"source": "command", "devices": devices})

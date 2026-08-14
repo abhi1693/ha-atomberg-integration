@@ -46,6 +46,7 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
             "source": "cloud",
             "devices": {"bedroom": {"power": False}},
         }
+        coordinator._command_revision = 0
         coordinator.async_set_updated_data = Mock()
         device = Mock()
         device.id = "office"
@@ -70,6 +71,7 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
         """A local command relies on UDP state instead of spending cloud quota."""
         coordinator = object.__new__(AtombergDataUpdateCoordinator)
         coordinator.data = {"source": "cloud", "devices": {}}
+        coordinator._command_revision = 0
         coordinator.async_set_updated_data = Mock()
         coordinator.async_schedule_command_reconciliation = Mock()
         device = Mock()
@@ -86,6 +88,7 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
         coordinator = object.__new__(AtombergDataUpdateCoordinator)
         coordinator.hass = Mock()
         coordinator._cancel_command_reconciliation = None
+        coordinator._command_revision = 1
         first_cancel = Mock()
         second_cancel = Mock()
 
@@ -99,6 +102,40 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
         first_cancel.assert_called_once_with()
         second_cancel.assert_not_called()
         assert call_later.call_count == 2
+
+    async def test_older_confirmation_cannot_overwrite_a_newer_command(self):
+        """Ignore a cloud response started before the latest household action."""
+        coordinator = object.__new__(AtombergDataUpdateCoordinator)
+        coordinator.hass = Mock()
+        coordinator.api = Mock()
+        coordinator.api.device_list = {
+            "office": {"name": "Office Fan", "state": {"led": False}}
+        }
+        coordinator.api.async_get_device_state = AsyncMock(
+            return_value=[
+                {
+                    "device_id": "office",
+                    "is_online": True,
+                    "power": False,
+                    "led": True,
+                }
+            ]
+        )
+        coordinator._command_revision = 2
+        coordinator._cloud_state_available = False
+        device = Mock()
+        device.id = "office"
+        coordinator.devices = [device]
+
+        data = await coordinator._async_refresh_cloud_state(
+            "command",
+            "command-confirmed",
+            expected_command_revision=1,
+        )
+
+        assert data is None
+        device.update_state.assert_not_called()
+        assert coordinator.api.device_list["office"]["state"]["led"] is False
 
     async def test_command_confirmation_publishes_and_persists_cloud_state(self):
         """Authoritative cloud state replaces and persists optimistic state."""
@@ -126,6 +163,7 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
             "speed": 4,
         }
         coordinator.devices = [device]
+        coordinator._command_revision = 0
         coordinator._cloud_state_available = False
         cache = Mock()
         cache.async_save = AsyncMock()
