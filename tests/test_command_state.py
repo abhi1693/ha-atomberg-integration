@@ -122,7 +122,6 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
             ]
         )
         coordinator._command_revision = 2
-        coordinator._cloud_state_available = False
         device = Mock()
         device.id = "office"
         coordinator.devices = [device]
@@ -164,7 +163,6 @@ class CommandStateTests(unittest.IsolatedAsyncioTestCase):
         }
         coordinator.devices = [device]
         coordinator._command_revision = 0
-        coordinator._cloud_state_available = False
         cache = Mock()
         cache.async_save = AsyncMock()
 

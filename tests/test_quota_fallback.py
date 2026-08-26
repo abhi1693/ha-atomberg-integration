@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from homeassistant.const import STATE_HOME
+from homeassistant.const import STATE_HOME, STATE_NOT_HOME
 
 from custom_components.atomberg import _devices_from_registry
 from custom_components.atomberg.api import CloudApiQuotaExceeded
@@ -239,8 +239,7 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
         device.state = {"is_online": True, "power": False, "speed": 2}
         coordinator.devices = [device]
         coordinator._devices_by_mac = {OFFICE_MAC: device}
-        coordinator._cloud_state_available = False
-        coordinator.async_set_updated_data = Mock()
+        coordinator.async_set_local_updated_data = Mock()
         state = Mock()
         state.state = STATE_HOME
         state.attributes = {"mac": OFFICE_MAC, "ip": OFFICE_IP}
@@ -255,12 +254,62 @@ class QuotaFallbackTests(unittest.IsolatedAsyncioTestCase):
 
         device.update_ip_address.assert_called_once_with(OFFICE_IP)
         device.update_state.assert_called_once_with({"is_online": True})
-        coordinator.async_set_updated_data.assert_called_once_with(
+        coordinator.async_set_local_updated_data.assert_called_once_with(
             {
                 "source": "presence",
                 "devices": {OFFICE_DEVICE_ID: device.state},
             }
         )
+
+    def test_tracker_departure_marks_fan_unavailable(self):
+        """A UniFi departure must override an earlier available cloud state."""
+        coordinator = object.__new__(AtombergDataUpdateCoordinator)
+        device = Mock()
+        device.id = OFFICE_DEVICE_ID
+        device.mac = OFFICE_MAC
+        device.state = {"is_online": False, "power": True, "speed": 6}
+        coordinator.devices = [device]
+        coordinator._devices_by_mac = {OFFICE_MAC: device}
+        coordinator.async_set_local_updated_data = Mock()
+        old_state = Mock()
+        old_state.state = STATE_HOME
+        old_state.attributes = {"mac": OFFICE_MAC, "ip": OFFICE_IP}
+        new_state = Mock()
+        new_state.state = STATE_NOT_HOME
+        new_state.attributes = {"mac": OFFICE_MAC}
+        event = Mock()
+        event.data = {
+            "entity_id": "device_tracker.atomberg",
+            "old_state": old_state,
+            "new_state": new_state,
+        }
+
+        coordinator._async_handle_tracker_state(event)
+
+        device.update_ip_address.assert_called_once_with(None)
+        device.update_state.assert_called_once_with({"is_online": False})
+        coordinator.async_set_local_updated_data.assert_called_once_with(
+            {
+                "source": "presence",
+                "devices": {OFFICE_DEVICE_ID: device.state},
+            }
+        )
+
+    def test_local_update_preserves_scheduled_cloud_refresh(self):
+        """UDP and presence updates must not reset the hourly cloud timer."""
+        coordinator = object.__new__(AtombergDataUpdateCoordinator)
+        coordinator.data = None
+        coordinator.last_update_success = False
+        coordinator._async_unsub_refresh = Mock()
+        coordinator.async_update_listeners = Mock()
+        data = {"source": "udp", "device_id": OFFICE_DEVICE_ID}
+
+        coordinator.async_set_local_updated_data(data)
+
+        assert coordinator.data == data
+        assert coordinator.last_update_success is True
+        coordinator._async_unsub_refresh.assert_not_called()
+        coordinator.async_update_listeners.assert_called_once_with()
 
 
 if __name__ == "__main__":

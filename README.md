@@ -70,7 +70,8 @@
   seconds later, so several controls share a single call and Atomberg's
   authoritative state replaces any optimistic mismatch. Confirmed cloud state
   is also persisted for quota-safe startup. UDP updates remain the preferred
-  zero-quota low-latency path when broadcasts can reach Home Assistant.
+  zero-quota low-latency path when broadcasts can reach Home Assistant. Local
+  UDP and network-presence updates do not postpone the fixed hourly cloud poll.
 - Sleep mode and Timer are mutually exclusive on the fan. Enabling either mode
   immediately clears the other mode in Home Assistant from the same acknowledged
   command, without spending an additional API call.
@@ -86,8 +87,9 @@
   without current presence are marked unavailable until LAN presence or an
   authoritative cloud refresh returns. Tracker addresses are resolved again
   before each local fallback so VLAN migrations cannot leave stale targets.
-  Late network-tracker updates also restore a powered fan automatically when
-  Home Assistant starts while the cloud circuit is open.
+  Network-tracker arrivals restore powered fans automatically, while departures
+  immediately mark electrically disconnected fans unavailable even after an
+  earlier successful cloud refresh.
 
 ## Control Methods
 
